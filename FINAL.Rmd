@@ -1,0 +1,105 @@
+---
+title: "PROJECT"
+author: "Liam GM"
+date: "2023-12-11"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(arrow)
+library(ggplot2)
+library(gridExtra)
+
+get_tot_usage <- function(bldg_id) {
+  url <- paste0("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/2023-houseData/", bldg_id, ".parquet")
+  df <- arrow::read_parquet(url)
+  df <- select(df, starts_with("out.electricity"))
+  sums_df <- data.frame(t(colSums(df)))
+  tot_usage <- sum(sums_df[1, ])
+  return(tot_usage)
+}
+
+df <- read_csv("/Users/liamgm/Downloads/static_house_info_387.csv") %>%
+  select(
+    "bldg_id",
+    "in.sqft",
+    "in.bedrooms",
+    "in.building_america_climate_zone",
+    "in.city",
+    "in.county"
+  )
+
+col_names <- c("Building_I.D.", "Square_Ft.", "Bedrooms", "Climate", "City", "County", 
+               "Average_July_Temp_F", "Average_Relative_Humidity", "Average_Wind_Speed_km_h",
+               "Average_Radiation_Level_W_m2", "Total_Energy_Usage_kW")
+
+for (i in 1:nrow(df)) {
+  row <- df[i, ]
+  weather_url <- paste0("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/weather/2023-weather-data/", row$in.county, ".csv")
+  weather_data <- read_csv(weather_url)
+  avg_weather_data <- data.frame(t(colMeans(weather_data[, sapply(weather_data, is.numeric)], na.rm = TRUE)))
+  df[i, paste0("weather_avg_", names(avg_weather_data))] <- avg_weather_data
+}
+
+df[["tot_energy_usage"]] <- sapply(df[["bldg_id"]], get_tot_usage)
+df <- df[, -c(10, 11, 13)]
+colnames(df) <- col_names
+df$`Average_July_Temp_F` <- df$`Average_July_Temp_F` * 9/5 + 32
+
+df2 <- df
+df2$`Average_July_Temp_F` <- df$`Average_July_Temp_F` + 5
+df2 <- df2[, -11]
+
+model_formula <- as.formula("Total_Energy_Usage_kW ~ Square_Ft. + Bedrooms + Climate +
+                              Average_July_Temp_F + Average_Relative_Humidity + 
+                              Average_Wind_Speed_km_h + Average_Radiation_Level_W_m2")
+
+model <- lm(model_formula, data = df)
+
+predictors <- c("Square_Ft.", "Bedrooms", "Climate",
+                "Average_July_Temp_F", "Average_Relative_Humidity", 
+                "Average_Wind_Speed_km_h", "Average_Radiation_Level_W_m2")
+
+df2_subset <- df2[, c("Square_Ft.", "Bedrooms", "Climate",
+                      "Average_July_Temp_F", "Average_Relative_Humidity", 
+                      "Average_Wind_Speed_km_h", "Average_Radiation_Level_W_m2")]
+
+df2$`Predicted_Total_Energy_Usage_kW` <- predict(model, newdata = df2_subset)
+summary(model)
+
+df2$Predicted_Total_Energy_Usage_kW <- (df2$Predicted_Total_Energy_Usage_kW/24)
+
+head(df2)
+
+summary(df2)
+
+histogram_plot <- ggplot(df2, aes(x = Predicted_Total_Energy_Usage_kW)) +
+  geom_histogram(binwidth = 50, fill = "orange", color = "black") +
+  labs(title = "Predicted Energy Usage",
+       x = "Predicted Total Energy Usage (kW)",
+       y = "Frequency")
+
+bar_chart_plot <- ggplot(df2, aes(x = Climate, y = Predicted_Total_Energy_Usage_kW)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  labs(title = "Climate:Energy",
+       x = "Climate",
+       y = "Predicted Total Energy Usage (kW)")
+
+wind_speed_plot <- ggplot(df2, aes(x = Average_Wind_Speed_km_h, y = Predicted_Total_Energy_Usage_kW)) +
+  geom_point() +
+  labs(title = "Wind Speed:Energy",
+       x = "Average Wind Speed (km/h)",
+       y = "Predicted Total Energy Usage (kW)")
+
+
+grid.arrange(histogram_plot, bar_chart_plot, wind_speed_plot, ncol = 3)
+
+```
+
+
+
